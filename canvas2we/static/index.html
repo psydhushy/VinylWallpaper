@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Canvas to Wallpaper</title>
+<style>
+  :root { --bg:#121212; --panel:#1e1e1e; --line:#2e2e2e; --text:#f2f2f2; --muted:#a7a7a7; --accent:#1ed760; --err:#ff6b6b; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:22px; margin:0 0 4px; }
+  p.sub { color:var(--muted); margin:0 0 20px; }
+  form, .opts { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  input[type=text] { flex:1 1 320px; padding:10px 12px; border-radius:8px; border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; }
+  select, input[type=number] { padding:6px 8px; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--text); font:inherit; }
+  input[type=number] { width:80px; }
+  button { padding:9px 16px; border:0; border-radius:999px; background:var(--accent); color:#000; font-weight:600; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:progress; }
+  label { color:var(--muted); display:inline-flex; gap:6px; align-items:center; }
+  .opts { margin:14px 0 22px; padding:12px; border:1px solid var(--line); border-radius:10px; }
+  #status { min-height:1.5em; color:var(--muted); margin-bottom:12px; }
+  #status.err { color:var(--err); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(200px, 1fr)); gap:16px; }
+  .card { background:var(--panel); border-radius:10px; overflow:hidden; display:flex; flex-direction:column; }
+  .card video, .card img { width:100%; aspect-ratio:9/16; object-fit:cover; background:#000; display:block; }
+  .card .none { aspect-ratio:9/16; display:grid; place-items:center; color:var(--muted); background:#181818; }
+  .card .meta { padding:10px; display:flex; flex-direction:column; gap:8px; flex:1; }
+  .card .t { font-weight:600; }
+  .card .a { color:var(--muted); font-size:13px; }
+  .card button { margin-top:auto; }
+  .result { margin-top:28px; padding:16px; border:1px solid var(--accent); border-radius:10px; }
+  .result video { width:100%; border-radius:6px; background:#000; }
+  code { background:#000; padding:2px 6px; border-radius:4px; word-break:break-all; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Spotify Canvas to Wallpaper Engine</h1>
+  <p class="sub">Paste a Spotify link, or type an artist, album or song name.</p>
+
+  <form id="search">
+    <input type="text" id="q" placeholder="Opeth  ·  Ghost Reveries  ·  https://open.spotify.com/..." required>
+    <select id="kind" aria-label="What the text names">
+      <option value="artist">Artist</option>
+      <option value="album">Album</option>
+      <option value="track">Song</option>
+    </select>
+    <label><input type="checkbox" id="only" checked> only with Canvas</label>
+    <button id="go">Find canvases</button>
+  </form>
+
+  <div class="opts">
+    <label>Layout
+      <select id="layout">
+        <option value="blur">Blurred backdrop</option>
+        <option value="fill">Crop to fill</option>
+        <option value="fit">Fit (black bars)</option>
+      </select>
+    </label>
+    <label>Size
+      <select id="size">
+        <option>1920x1080</option><option>2560x1440</option><option>3840x2160</option><option>3440x1440</option>
+      </select>
+    </label>
+    <label>Loop crossfade (s) <input type="number" id="xfade" min="0" max="2" step="0.1" value="0"></label>
+    <label><input type="checkbox" id="install"> Copy into Wallpaper Engine</label>
+  </div>
+
+  <div id="status"></div>
+  <div class="grid" id="grid"></div>
+  <div id="result"></div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const status = (msg, err) => { $('status').textContent = msg; $('status').className = err ? 'err' : ''; };
+
+async function api(path, body) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await r.json();
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+function el(tag, props = {}, ...kids) {
+  const e = Object.assign(document.createElement(tag), props);
+  e.append(...kids);
+  return e;
+}
+
+$('search').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  $('go').disabled = true; $('grid').replaceChildren(); $('result').replaceChildren();
+  status($('kind').value === 'artist'
+    ? 'Scanning the artist\'s releases… this can take a minute.'
+    : 'Looking up tracks and canvases…');
+  try {
+    const { tracks } = await api('/api/lookup', { query: $('q').value, kind: $('kind').value });
+    const withCanvas = tracks.filter(t => t.canvas);
+    const clips = new Set(withCanvas.map(t => t.canvas.url)).size;
+    status(`${withCanvas.length} of ${tracks.length} track(s) have a Canvas (${clips} distinct clip${clips === 1 ? '' : 's'}).`);
+    for (const t of ($('only').checked ? withCanvas : tracks)) $('grid').append(card(t));
+  } catch (e) { status(e.message, true); }
+  $('go').disabled = false;
+});
+
+function card(t) {
+  let media;
+  if (!t.canvas) media = el('div', { className: 'none', textContent: 'No Canvas' });
+  else if (t.canvas.type === 'IMAGE') media = el('img', { src: t.canvas.url, alt: '' });
+  else media = el('video', { src: t.canvas.url, autoplay: true, muted: true, loop: true, playsInline: true });
+  const btn = el('button', { textContent: 'Make wallpaper', disabled: !t.canvas });
+  btn.onclick = () => build(t, btn);
+  return el('div', { className: 'card' }, media,
+    el('div', { className: 'meta' },
+      el('div', { className: 't', textContent: (t.track_number ? t.track_number + '. ' : '') + t.name }),
+      el('div', { className: 'a', textContent: t.artists.join(', ') + (t.album ? ' · ' + t.album : '') }),
+      btn));
+}
+
+async function build(t, btn) {
+  const [width, height] = $('size').value.split('x').map(Number);
+  document.querySelectorAll('.card button').forEach(b => b.disabled = true);
+  status(`Building wallpaper for “${t.name}”…`);
+  try {
+    const r = await api('/api/build', { uri: t.uri, width, height, layout: $('layout').value,
+                                        crossfade: Number($('xfade').value), install: $('install').checked });
+    status('Done.');
+    $('result').replaceChildren(el('div', { className: 'result' },
+      el('video', { src: r.video, autoplay: true, muted: true, loop: true, controls: true }),
+      el('p', {}, 'Project folder: ', el('code', { textContent: r.folder })),
+      r.installed ? el('p', {}, 'Installed to: ', el('code', { textContent: r.installed }))
+                  : el('p', { textContent: 'In Wallpaper Engine: Open Wallpaper → Open from file → pick project.json in that folder.' })));
+    $('result').scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { status(e.message, true); }
+  document.querySelectorAll('.card button').forEach(b => b.disabled = false);
+  document.querySelectorAll('.card').forEach(c => { if (c.querySelector('.none')) c.querySelector('button').disabled = true; });
+}
+</script>
+</body>
+</html>
