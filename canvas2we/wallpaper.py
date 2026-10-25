@@ -184,7 +184,10 @@ def frame_hash(source: str, at: float) -> int | None:
     """64-bit difference hash of the frame at ``at`` seconds (9x8 greyscale)."""
     try:
         raw = subprocess.run(
-            ["ffmpeg", "-v", "error", *(["-ss", str(at)] if at else []), "-i", source, "-frames:v", "1",
+            # One decoding thread: many of these run at once, and each would otherwise
+            # start a thread (and buffers) per CPU core.
+            ["ffmpeg", "-v", "error", "-threads", "1", *(["-ss", str(at)] if at else []), "-i", source,
+             "-frames:v", "1",
              "-vf", "scale=9:8,format=gray", "-f", "rawvideo", "-"],
             capture_output=True, timeout=30,
         ).stdout

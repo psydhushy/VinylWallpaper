@@ -34,7 +34,9 @@ APP_NAME = "Wallpaper Engine Vinyl"
 # Public mode (canvas2we ui --public, or CANVAS2WE_PUBLIC=1) is for sharing the app with other
 # people: it hides everything that acts on the computer running it.
 PUBLIC = os.environ.get("CANVAS2WE_PUBLIC") == "1"
-MAX_RENDERS = int(os.environ.get("CANVAS2WE_MAX_RENDERS", "2"))  # wallpapers rendered at once
+# Hosted copies (public mode) usually get about 1 GB of memory, so they do less at once.
+MAX_RENDERS = int(os.environ.get("CANVAS2WE_MAX_RENDERS", "1" if PUBLIC else "2"))  # wallpapers rendered at once
+FINGERPRINT_WORKERS = int(os.environ.get("CANVAS2WE_FINGERPRINT_WORKERS", "4" if PUBLIC else "24"))
 DONATE_URL = os.environ.get("CANVAS2WE_DONATE_URL") or config.get("donate_url")
 MAX_CARDS = 60
 COLUMNS = 5
@@ -430,7 +432,7 @@ def same_clips(urls: list[str], progress=None) -> dict[str, str]:
         h = wp.frame_hash(url, 1.0)
         return [h if h is not None else wp.frame_hash(url, 0)]  # stills and very short clips
 
-    with ThreadPoolExecutor(max_workers=24) as pool:
+    with ThreadPoolExecutor(max_workers=FINGERPRINT_WORKERS) as pool:
         for done, (url, hashes) in enumerate(zip(todo, pool.map(first, todo)), 1):
             store[url] = hashes
             if progress:
@@ -438,7 +440,7 @@ def same_clips(urls: list[str], progress=None) -> dict[str, str]:
     h1 = {u: store[u][0] for u in urls}
     lookalikes = [u for u in urls if len(store[u]) == 1
                   and any(v != u and wp.hashes_close(h1[u], h1[v]) for v in urls)]
-    with ThreadPoolExecutor(max_workers=24) as pool:
+    with ThreadPoolExecutor(max_workers=FINGERPRINT_WORKERS) as pool:
         for url, h in zip(lookalikes, pool.map(lambda u: wp.frame_hash(u, 3.0), lookalikes)):
             store[url] = [h1[url], h]
     if todo or lookalikes:
@@ -708,6 +710,7 @@ def most_popular() -> None:
     finally:
         box.empty()
     if not state.popular:
+        popular_canvases.clear()  # don't keep an empty answer for hours; ask Spotify again next visit
         html('<div class="c2w-note">' + (
             "Spotify isn't sending canvases right now. Try again in a little while." if PUBLIC else
             "Spotify didn't send any canvases. Press <b>Connect to Spotify</b> at the top (or disconnect "
